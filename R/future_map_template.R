@@ -359,6 +359,18 @@ future_map_template <- function(.map, .type, .x, .f, ..., .progress = FALSE, fut
   ## - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   if(.progress) {
 
+    job_id <- add_job(
+      name = "future furrr job",
+      status = "furrrallel process...",
+      progressUnits = as.integer(n.x),
+      actions = NULL,
+      estimate = NULL,
+      estimateRemaining = NULL,
+      running = TRUE,
+      autoRemove = TRUE,
+      group = NULL
+    )
+
     if (debug) mdebug("Polling for progress ...")
 
     not_resolved_once <- !all_resolved(fs)
@@ -387,6 +399,7 @@ future_map_template <- function(.map, .type, .x, .f, ..., .progress = FALSE, fut
 
       cat("\r", all_text)
       utils::flush.console()
+      set_job_progress(job_id, n_ticks)
     }
 
     if(not_resolved_once) {
@@ -400,6 +413,7 @@ future_map_template <- function(.map, .type, .x, .f, ..., .progress = FALSE, fut
       all_text <- paste0("Progress: ", progress, " 100%")
       cat("\r", all_text)
       cat("\n\n")
+      set_job_progress(job_id, n.x)
     }
 
     if (debug) mdebug("Polling for progress ... DONE")
