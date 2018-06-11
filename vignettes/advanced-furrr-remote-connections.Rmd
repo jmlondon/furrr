@@ -43,6 +43,13 @@ At this point, I encourage you to look elsewhere for exactly how to set up
 an AWS instance based on this AMI. I have a blog post dedicated to this, located
 at my website [blog.davisvaughan.com](https://blog.davisvaughan.com/post/rstudio-shiny-aws-1/).
 
+It is also possible to create your own custom AMI(s). This has some initial 
+startup investment as it requires some knowledge of how to install dependent
+libraries in Linux. The advantage, however, is that you end up with an AMI
+specifically developed for your needs. You can also pre-install your most
+common R packages and reduce subsequent startup times when you launch an
+instance.
+
 ## Running code remotely on a single EC2 instance
 
 Imagine you have some models that you want to run, but you don't want to run them
@@ -104,6 +111,105 @@ public_ip <- "18.206.46.236"
 # This is where my pem file lives (password file to connect).
 ssh_private_key_file <- "~/Desktop/programming/AWS/key-pair/dvaughan.pem"
 ```
+
+#### Creating and Connecting to an EC2 instance programatically
+
+As you move to more advanced uses of EC2, you might want to handle the creation
+and connection to the instance within an R script. This can be done with some
+help from the `reticulate` package and Python's `boto3`. In this section, we'll
+walk through the various steps.
+
+```{r, eval=FALSE}
+library(reticulate)
+
+# Import boto3 from python
+# you will need to install boto3 into python (via pip or conda)
+boto <- import("boto3")
+
+# Import EC2 client
+ec2 <- boto$resource('ec2')
+```
+
+We will rely on the `create_instance` function from `boto3` to create the 
+instance and specify our parameters of interest. This example uses the 
+*ami-bca063c4* from Louse Laslett's US West, Oregon AMI.
+
+The `ImageId` parameter is where you enter the unique alpha-numeric code for the
+AMI you would like your instance based on. `MinCount` and `MaxCount` allow you
+to specify the number of instances you would like to launch. `KeyName` refers
+to the name of the key (and local *.pem) stored with AWS. `SubnetId` and
+`SecurityGroupIds` can be obtained from your EC2 settings. Lastly, 
+`InstanceType` allows you to specify which type of instance you would like to
+launch.
+
+```{r, eval=FALSE}
+instance = ec2$create_instances(
+  ImageId='ami-bca063c4',
+  MinCount=2L,
+  MaxCount=2L,
+  KeyName="dvaughan",
+  SubnetId = 'subnet-########',
+  SecurityGroupIds = list('sg-########'),
+  InstanceType='t2.micro')
+```
+
+At this point, our instance(s) will begin to fire up within AWS. This takes 
+some time, so we need to pause for a bit to let everything fire up.
+Thankfully, there's a function within `boto3` that do just that. Note that we
+only wait until the first instance is running before moving on. We are presuming
+the instances all launch in about the same amount of time.
+
+```{r, eval=FALSE}
+instance[[1]]$wait_until_running()
+```
+
+At this point, things are up and running and we are ready to connect. In order
+to do this, we need to know the public IP addresses and the unique identifiers
+for each of our instances.
+
+```{r, eval=FALSE}
+# reload instances so we get the public IPs
+purrr::walk(instance, ~ .$reload())
+
+# get the instance ids and public IP addresses
+ids <- purrr::map(instance, ~ .$id)
+public_ips <- purrr::map_chr(instance, ~ .$public_ip_address)
+```
+
+
+The last thing to do is setup our SSH details and make sure the SSH port (22) 
+is available for connection. 
+
+```{r, eval=FALSE}
+# This is where my pem file lives (password file to connect).
+ssh_private_key_file <- "~/Desktop/programming/AWS/key-pair/dvaughan.pem"
+
+# ssh doesn't start up right away, so we need to check
+check_for_ssh <- function() {
+  z <- system(paste("ssh-keyscan",
+                    public_ips[1],
+                    "2>&1 | grep -v '^$' "),
+              ignore.stdout = TRUE)
+  return(z)
+}
+
+# wait for ssh
+while( check_for_ssh() != 0 ) {
+  Sys.sleep(2)
+}
+Sys.sleep(5)
+```
+
+
+After you are done with your instances, it's a good idea to terminate (or stop)
+them so you won't be charged (unless running on the free tier).
+
+```{r, eval=FALSE}
+# terminate the instances
+ec2$instances$terminate(ids)
+```
+
+### Create cluster on the EC2 instance
 
 With all of this in hand, the next step is to use `future::makeClusterPSOCK()` to connect
 to the instance. Traditionally, one would use `parallel::makePSOCKcluster()` to connect,
